@@ -1,0 +1,172 @@
+To change your Risk/Reward (RR) ratio from 1:1.5 to 1:2.25, you need to update the target generation logic so the models are trained to predict this larger take-profit.
+
+Here is exactly what you need to change, run, and watch out for based on your current pipeline:
+
+1. Changes to Make
+Open 
+
+notebooks/03_target_construction.ipynb
+. Go to Step 1 where 
+
+compute_triple_barrier_labels
+ is called.
+
+Change n_tp=1.5 to n_tp=2.25
+(Optional but recommended): Change t_bars=12 to a higher number like t_bars=18 or t_bars=24. A larger take-profit naturally takes longer to hit, so you may need to give the trade more time to play out before it hits the time-out barrier.
+2. Notebooks to Re-Run (in order)
+Since your training targets (the labels) have changed, you have to push this update through the entire pipeline:
+
+
+03_target_construction.ipynb
+: Re-run entirely to overwrite 
+
+eurusd_labelled.csv
+.
+
+04_model_training.ipynb
+: Re-run to train a brand new CatBoost model on the new 1:2.25 targets.
+
+05_walk_forward_validation.ipynb
+: (Optional) To see how the raw model performs over time.
+
+06_shap_analysis.ipynb
+: (Optional) To see if the model looks for different features now that it's hunting for bigger trends instead of quick scalps.
+
+08_signal_gate.ipynb
+: Crucial. Because your base probabilities will drop, your REGIME_THRESHOLDS confidence gate needs to be re-run and potentially recalibrated to ensure you're filtering out the bad trades correctly.
+
+10_production_validation.ipynb
+: Re-run to see the final gated results.
+3. What to Notice in the Outputs (Expectations)
+Changing RR drastically shifts the math of your strategy. Here is what you should physically check in the outputs:
+
+In Notebook 03 (Label Summary): Watch your TP hit (+1) percentage. It was ~32% with a 1.5 TP. With a 2.25 TP, this will drop significantly. Pay attention to the Class balance warning — if long wins drop below 20%, the dataset is becoming heavily imbalanced.
+In Notebook 03 (Time-outs): Watch your Time-out (0) percentage. If this spikes heavily, it means 12 bars is not enough time to reach 2.25 ATR. You will need to increase t_bars.
+In Notebook 04 & 05 (Accuracy): Your model's classification Accuracy will likely drop. It is much harder for a model to predict a 2.25 ATR move than a 1.5 ATR move. It might start heavily predicting 0s (SL hits) to play it safe.
+In Notebook 10 (Production Validation): Your gated_acc (gated win rate) will drop. Do not panic. At an RR of 1:1.5, your break-even win rate is 40%. At an RR of 1:2.25, your break-even win rate drops to ~30%. Watch the profit_factor; if your profit factor goes up even while accuracy drops, the 1:2.25 RR is giving you an edge!
+
+
+//azure vm setup
+Yes! Azure is perfect for this. You can create a Windows Virtual Machine on Azure — it's essentially the same as a VPS but managed through your Azure account.
+
+💡 Cost tip: If you have Azure free credits ($200 for new accounts), this costs $0 for the first month. After that, a small Windows VM costs ~$15–35/month.
+
+Step-by-Step: Azure Windows VM for Your Trading Bot
+Step 1 — Create a Windows VM on Azure
+Go to portal.azure.com and sign in
+Click "Create a resource" → Search "Virtual Machine" → Click Create
+Fill in the form:
+Setting	Value
+Resource group	Create new → name it trading-bot-rg
+VM name	trading-bot-vm
+Region	
+
+(Europe) UK South
+ (close to Fusion Markets)
+Image	Windows Server 2022 Datacenter
+Size	B2s (2 vCPUs, 4GB RAM — cheapest that works)
+Username	traderadmin
+Password	Choose a strong password
+Public inbound ports	Allow RDP (3389)
+Click "Review + Create" → "Create"
+Wait ~3 minutes for it to deploy
+Step 2 — Connect to Your VM via Remote Desktop
+In Azure portal → go to your VM → Click "Connect" → "RDP"
+Click "Download RDP file"
+Open the downloaded .rdp file → it opens Remote Desktop Connection
+Enter username traderadmin and your password
+You now see a Windows desktop running in Azure ✅
+Step 3 — Install MetaTrader 5 on the VM
+Inside the Azure VM remote desktop:
+
+Open Internet Explorer or Edge
+Go to metatrader5.com/en/download
+Download and install MT5
+Open MT5 → Log into your Fusion Markets account
+Go to Tools → Options → Expert Advisors and check:
+✅ Allow automated trading
+✅ Allow DLL imports
+Click OK
+Step 4 — Install Python on the VM
+In the VM, open Edge → go to python.org/downloads
+Download Python 3.11 → Run installer
+⚠️ IMPORTANT: Check "Add Python to PATH" before clicking Install
+Click "Install Now"
+Step 5 — Transfer Your Project to the VM
+Easiest method — GitHub:
+
+If your project is on GitHub:
+
+powershell
+# In PowerShell on the VM:
+git clone https://github.com/YOUR_USERNAME/Algo_based_system
+cd Algo_based_system
+If NOT on GitHub — use Azure Storage:
+
+On your laptop: zip your entire Algo_based_system folder
+In Azure portal → Storage Accounts → Create one → Upload the zip
+In the VM → download and unzip it
+Or simplest — Remote Desktop copy-paste:
+
+In RDP, you can drag files from your laptop directly into the VM window
+Step 6 — Install Dependencies on the VM
+Open PowerShell on the VM:
+
+powershell
+cd C:\Algo_based_system
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+Step 7 — Set Up Auto-Restart (Task Scheduler)
+So the bot automatically restarts if the VM reboots:
+
+Press Windows Key → search "Task Scheduler" → Open it
+Click "Create Task" (right panel)
+General tab:
+Name: AlgoTradingBot
+✅ Check "Run whether user is logged on or not"
+✅ "Run with highest privileges"
+Triggers tab → "New":
+Begin the task: "At startup"
+✅ Enabled → OK
+Actions tab → "New":
+Action: "Start a program"
+Program: C:\Algo_based_system\.venv\Scripts\python.exe
+Arguments: run_bot.py --mode paper
+Start in: C:\Algo_based_system
+Click OK
+Conditions tab: UNCHECK "Start only if PC is on AC power"
+Click OK → enter your VM password
+Step 8 — Run the Bot
+In PowerShell on the VM:
+
+powershell
+cd C:\Algo_based_system
+.venv\Scripts\activate
+python run_bot.py --mode paper
+You'll see the bot start and wait for the next 1H bar. ✅
+
+Step 9 — Disconnect and Let It Run
+Close the Remote Desktop window — the VM keeps running
+Your laptop can be completely off
+The bot runs 24/7 in Azure
+Step 10 — How to Check In
+Whenever you want to see how signals are going:
+
+Go to portal.azure.com → Your VM → Connect → Download RDP
+Log in → check the PowerShell window (bot is still running)
+Open 
+
+results/paper_trade_log.csv
+ to review signals
+Summary
+Your Laptop (OFF)
+      │
+      │  RDP once a week to check
+      ▼
+  Azure VM — Windows Server (UK South)
+      ├── MetaTrader 5 (Fusion Markets account)
+      └── run_bot.py --mode paper (running 24/7)
+              └── paper_trade_log.csv
+Total time to set up: ~45 minutes for a first-timer.
+Cost: Free if you have Azure credits. ~$15–35/month after credits.
