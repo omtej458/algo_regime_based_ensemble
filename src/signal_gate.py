@@ -19,21 +19,17 @@ import numpy as np
 
 
 # ── Gate thresholds (single source of truth — tune these later) ───────────────
-CONFIDENCE_THRESHOLD = 0.60   # minimum ensemble probability to pass gate
-ADX_MINIMUM          = 18     # lowered from 18: 1H ADX legitimately low during consolidation
-                              # 15 allows signals when daily trend is strong but 1H is pausing
-ALLOWED_SESSIONS     = [1, 2, 3]   # London (1), New York (2), Overlap (3) only — Asian (0) blocked
+CONFIDENCE_THRESHOLD = 0.62   # global threshold — regime routing disabled (HMM labels unstable after retrain)
+ADX_MINIMUM          = 15
+ALLOWED_SESSIONS     = [1, 2, 3]
 
-# ── Regime thresholds — calibrated from notebook 09 Cell 5 results ──────────
-# Based on actual per-regime accuracy from your 6-year dataset:
-#   ranging       : 72.72% base acc — highest quality → lowest threshold
-#   quiet_trend   : 59.79% base acc — medium quality → standard threshold
-#   volatile_trend: 57.30% base acc — lowest quality → strictest threshold
-# VIX extreme veto is handled separately via vix_regime >= 2 rule in the gate
+# Regime thresholds — currently overridden by CONFIDENCE_THRESHOLD above
+# HMM relabeled 76% of bars as 'ranging' after April 2026 data added.
+# Regime routing re-enable after next stable HMM refit.
 REGIME_THRESHOLDS = {
-    'ranging':        0.60,   # 72.72% base acc — most reliable, standard threshold
-    'quiet_trend':    0.62,   # 59.79% base acc — tighter gate
-    'volatile_trend': 0.65,   # 57.30% base acc — only high conviction
+    'volatile_trend': 0.62,   # equalised — routing disabled
+    'ranging':        0.62,   # equalised — routing disabled
+    'quiet_trend':    0.62,   # equalised — routing disabled
 }
 
 # def apply_signal_gate(
@@ -217,13 +213,11 @@ def apply_signal_gate(
                 reasons[i] = f"adx_too_low"
                 continue
 
-        # Rule 3: Session filter — skip Asian session
-        if has_session:
-            session_val = df['session'].iloc[i]
-            if session_val not in ALLOWED_SESSIONS:
-                passed[i]  = False
-                reasons[i] = "asian_session"
-                continue
+        # Rule 3: Session filter — REMOVED
+        # Reason: The CSV datetime index loses time component on save/load,
+        # making hour-based session detection unreliable.
+        # Session timing is already encoded as a trained feature inside the ensemble.
+        # The model penalises Asian-session bars through learned feature weights.
 
         # Rule 4: VIX extreme — skip if VIX regime >= 2 (VIX > 22)
         # This is the explicit crash/panic veto replacing the 'extreme' HMM regime

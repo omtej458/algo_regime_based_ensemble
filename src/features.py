@@ -205,7 +205,13 @@ def compute_rate_differential(df: pd.DataFrame) -> pd.DataFrame:
         ("2025-03-06", 4.50, 2.65),
         ("2025-03-20", 4.50, 2.65),
         ("2025-05-08", 4.50, 2.40),
-        ("2026-01-01", 4.50, 2.40),  # placeholder — update as meetings occur
+        ("2025-06-19", 4.50, 2.15),
+        ("2025-07-31", 4.50, 2.15),
+        ("2025-09-18", 4.25, 2.15),
+        ("2025-10-30", 4.00, 2.15),
+        ("2025-12-18", 3.75, 2.15), 
+        ("2026-02-05", 3.75, 2.15),
+        ("2026-03-19", 3.75, 2.15),  # placeholder — update as meetings occur
     ]
 
     schedule_df = pd.DataFrame(rate_schedule, columns=["date", "fed_rate", "ecb_rate"])

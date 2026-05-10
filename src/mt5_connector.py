@@ -315,13 +315,18 @@ def fetch_yfinance(
     import yfinance as yf
 
     try:
-        raw = yf.download(
-            ticker,
-            period=period,
-            interval=interval,
-            progress=False,
-            auto_adjust=True,
-        )
+        # Prefer Ticker.history() — more stable across yfinance versions.
+        # Fall back to yf.download() if history() returns empty data.
+        tkr = yf.Ticker(ticker)
+        raw = tkr.history(period=period, interval=interval, auto_adjust=True)
+        if raw.empty:
+            raw = yf.download(
+                ticker,
+                period=period,
+                interval=interval,
+                progress=False,
+                auto_adjust=True,
+            )
 
         if raw.empty:
             print(f"  [ERROR] yfinance returned no data for {ticker}")
