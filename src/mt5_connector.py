@@ -89,36 +89,68 @@ def disconnect():
 # ── Live data fetching ────────────────────────────────────────────────────────
 
 TIMEFRAME_MAP = {
+    '5M':  mt5.TIMEFRAME_M5,
     '1H':  mt5.TIMEFRAME_H1,
     '4H':  mt5.TIMEFRAME_H4,
     '1D':  mt5.TIMEFRAME_D1,
 }
 
 
+def ensure_symbol(symbol: str) -> bool:
+    """Ensure the symbol exists and is selected in Market Watch."""
+    info = mt5.symbol_info(symbol)
+    if info is None:
+        print(f"  [ERROR] Symbol not found in MT5: {symbol}")
+        return False
+    if not info.visible and not mt5.symbol_select(symbol, True):
+        print(f"  [ERROR] Could not select {symbol} in Market Watch: {mt5.last_error()}")
+        return False
+    return True
+
+
+def _copy_rates_with_reconnect(symbol: str, tf: int, n_bars: int):
+    """
+    Fetch rates, retrying after transient terminal/IPC failures.
+
+    MT5 can return (-1, 'Terminal: Call failed') while account_info() still works,
+    so a health check alone is not enough to catch this state.
+    """
+    rates = mt5.copy_rates_from_pos(symbol, tf, 0, n_bars)
+    if rates is not None and len(rates) > 0:
+        return rates
+
+    first_err = mt5.last_error()
+    transient_codes = {-1, -10001, -10002, -10003, -10004, -10005}
+    if first_err and first_err[0] in transient_codes:
+        print(f"  [MT5 WARN] copy_rates failed for {symbol} (code {first_err[0]}: {first_err[1]}). Reconnecting...")
+        if reconnect(max_attempts=3, wait_seconds=5):
+            time.sleep(1)
+            rates = mt5.copy_rates_from_pos(symbol, tf, 0, n_bars)
+            if rates is not None and len(rates) > 0:
+                return rates
+            print(f"  [MT5 WARN] Retry after reconnect still failed: {mt5.last_error()}")
+        else:
+            print("  [ERROR] Reconnect failed. Skipping bar.")
+    return rates
+
+
 def fetch_ohlcv(symbol: str, timeframe: str, n_bars: int) -> pd.DataFrame:
     """
     Fetches the last N closed bars for a symbol from MT5.
-    Automatically attempts reconnection on IPC failure (-10001).
+    Automatically attempts reconnection on terminal/IPC failures.
     """
     tf = TIMEFRAME_MAP.get(timeframe)
     if tf is None:
-        raise ValueError(f"Unknown timeframe: {timeframe}. Use 1H, 4H, or 1D.")
+        raise ValueError(f"Unknown timeframe: {timeframe}. Use 5M, 1H, 4H, or 1D.")
 
-    rates = mt5.copy_rates_from_pos(symbol, tf, 0, n_bars)
+    if not ensure_symbol(symbol):
+        return pd.DataFrame()
 
-    # IPC send failed — MT5 was closed and reopened
-    if rates is None:
-        err = mt5.last_error()
-        if err[0] == -10001:
-            print(f"  [IPC ERROR] MT5 connection dropped. Triggering reconnect...")
-            if reconnect(max_attempts=5, wait_seconds=20):
-                rates = mt5.copy_rates_from_pos(symbol, tf, 0, n_bars)
-            else:
-                print(f"  [ERROR] Reconnect failed. Skipping bar.")
-                return pd.DataFrame()
+    rates = _copy_rates_with_reconnect(symbol, tf, n_bars)
 
     if rates is None or len(rates) == 0:
         print(f"  [ERROR] No data for {symbol} {timeframe}: {mt5.last_error()}")
+        print("  [HINT] Check that MT5 is open, logged in, connected to the broker, and has this symbol in Market Watch.")
         return pd.DataFrame()
 
     df = pd.DataFrame(rates)

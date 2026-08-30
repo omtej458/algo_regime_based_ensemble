@@ -19,17 +19,18 @@ import numpy as np
 
 
 # ── Gate thresholds (single source of truth — tune these later) ───────────────
-CONFIDENCE_THRESHOLD = 0.62   # global threshold — regime routing disabled (HMM labels unstable after retrain)
+CONFIDENCE_THRESHOLD = 0.62   # updated — May 2026 retrain
 ADX_MINIMUM          = 15
 ALLOWED_SESSIONS     = [1, 2, 3]
 
-# Regime thresholds — currently overridden by CONFIDENCE_THRESHOLD above
-# HMM relabeled 76% of bars as 'ranging' after April 2026 data added.
-# Regime routing re-enable after next stable HMM refit.
+# ── Regime thresholds — May 2026 retrain (notebook 09 Cell 5) ─────────────────
+# quiet_trend   : 73.29% base acc, 374 HC signals — BEST regime → lowest threshold
+# ranging       : 61.97% base acc, 737 HC signals — standard gate
+# volatile_trend: 55.96% base acc, 7 HC signals — WORST regime → strictest gate
 REGIME_THRESHOLDS = {
-    'volatile_trend': 0.62,   # equalised — routing disabled
-    'ranging':        0.62,   # equalised — routing disabled
-    'quiet_trend':    0.62,   # equalised — routing disabled
+    'quiet_trend':    0.60,   # 73.29% base — most reliable, take more signals
+    'ranging':        0.62,   # 61.97% base — standard gate
+    'volatile_trend': 0.68,   # 55.96% base, barely any HC — only extreme conviction
 }
 
 # def apply_signal_gate(

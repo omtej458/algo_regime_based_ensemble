@@ -541,7 +541,16 @@ def log_signal(record: dict):
     for attempt in range(1, max_retries + 1):
         try:
             if file_exists:
-                df_row.to_csv(log_path, mode='a', header=False, index=False)
+                existing = pd.read_csv(log_path)
+                columns = list(existing.columns)
+                for col in df_row.columns:
+                    if col not in columns:
+                        columns.append(col)
+                combined = pd.concat(
+                    [existing.reindex(columns=columns), df_row.reindex(columns=columns)],
+                    ignore_index=True,
+                )
+                combined.to_csv(log_path, mode='w', header=True, index=False)
             else:
                 df_row.to_csv(log_path, mode='w', header=True, index=False)
             return  # success
@@ -655,6 +664,14 @@ def run_one_bar(ensemble: EnsembleClassifier, hmm_model, regime_map: dict):
     if eurusd_1h.empty:
         print("  [ERROR] Failed to fetch EURUSD 1H data. Skipping bar.")
         return None
+
+    # DXY fallback: yfinance if broker doesn't offer it
+    if dxy_1h.empty:
+        print("  [WARN] DXY not available from broker — fetching from yfinance (DX-Y.NYB)")
+        dxy_1h = fetch_yfinance("DX-Y.NYB", period="2y", interval="1h")
+        if dxy_1h.empty:
+            print("  [WARN] DXY yfinance also failed — dxy_slope will be set to 0 (neutral)")
+            # Still continue — compute_dxy_slope handles empty DataFrame gracefully
 
     def _read_macro_csv(path) -> pd.DataFrame:
         """Read a yfinance-format CSV with tz-aware or tz-naive DatetimeIndex."""
@@ -772,10 +789,42 @@ def run_one_bar(ensemble: EnsembleClassifier, hmm_model, regime_map: dict):
           f"({'ACTIVE' if in_session else 'ASIAN — blocked'})")
 
     # ── Step 6: Session filter ────────────────────────────────────────────────
+    signal_record = {
+        'signal_datetime': datetime.utcnow().isoformat(),
+        'bar_datetime':    latest.index[-1].isoformat(),
+        'entry_datetime':  latest.index[-1].isoformat(),
+        'pair':            symbol,
+        'direction':       direction,
+        'direction_text':  'LONG' if direction == 1 else 'SHORT',
+        'ensemble_prob':   round(prob, 4),
+        'confidence':      round(confidence, 4),
+        'regime':          current_regime,
+        'gate_passed':     False,
+        'gate_reason':     '',
+        'entry_price':     None,
+        'tp_price':        None,
+        'sl_price':        None,
+        'lots':            None,
+        'atr_pips':        None,
+        'vix_regime':      float(vix_val),
+        'adx_14':          round(adx_val, 2),
+        'session':         int(df_features['session'].iloc[-1]),
+        'session_utc':     cur_hour,
+        'ticket':          None,
+        'exit_datetime':   None,
+        'exit_price':      None,
+        'outcome':         '',
+        'pnl_pips':        None,
+        'notes':           f"mode={CONFIG['mode']}; signal_only",
+    }
+
     if not in_session:
-        print(f"  [GATE BLOCKED] Reason: asian_session "
-              f"({cur_hour:02d}:xx UTC)")
-        return None
+        gate_reason = f"asian_session ({cur_hour:02d}:xx UTC)"
+        print(f"  [GATE BLOCKED] Reason: {gate_reason}")
+        signal_record['gate_reason'] = gate_reason
+        signal_record['outcome'] = 'BLOCKED'
+        log_signal(signal_record)
+        return signal_record
 
     # ── Step 7: Signal gate (confidence + ADX + VIX) ─────────────────────────
     latest_with_regime = df_features.iloc[[-1]]
@@ -792,103 +841,15 @@ def run_one_bar(ensemble: EnsembleClassifier, hmm_model, regime_map: dict):
 
     if not gate_passed:
         print(f"  [GATE BLOCKED] Reason: {gate_reason}")
-        log_signal({
-            'entry_datetime': latest.index[-1].isoformat(),
-            'pair':           symbol,
-            'direction':      0,
-            'ensemble_prob':  round(prob, 4),
-            'confidence':     round(confidence, 4),
-            'regime':         current_regime,
-            'gate_passed':    False,
-            'gate_reason':    gate_reason,
-            'entry_price':    None, 'tp_price':      None,
-            'sl_price':       None, 'lots':          None,
-            'ticket':         None, 'exit_datetime': None,
-            'exit_price':     None, 'outcome':       'BLOCKED',
-            'pnl_pips':       None, 'notes':         '',
-        })
-        return None
+        signal_record['gate_reason'] = gate_reason
+        signal_record['outcome'] = 'BLOCKED'
+        log_signal(signal_record)
+        return signal_record
 
     print(f"  [GATE PASSED] Signal confirmed.")
-
-    # ── Step 8: TP / SL calculation ───────────────────────────────────────────
-    atr         = float(df_features['atr_14'].iloc[-1])
-    price       = float(eurusd_1h['Close'].iloc[-1])
-    tp_distance = atr * CONFIG["atr_tp_mult"]
-    sl_distance = atr * CONFIG["atr_sl_mult"]
-
-    if direction == 1:
-        tp_price = price + tp_distance
-        sl_price = price - sl_distance
-    else:
-        tp_price = price - tp_distance
-        sl_price = price + sl_distance
-
-    sl_pips = sl_distance * 10000
-
-    print(f"  Entry: {price:.5f} | TP: {tp_price:.5f} | "
-          f"SL: {sl_price:.5f} | SL pips: {sl_pips:.1f}")
-
-    # ── Step 9: Open trade limit ──────────────────────────────────────────────
-    open_positions = get_open_positions(symbol)
-    if len(open_positions) >= CONFIG["max_open_trades"]:
-        print(f"  [SKIP] {len(open_positions)} open position(s) — "
-              f"max {CONFIG['max_open_trades']}.")
-        return None
-
-    # ── Step 10: Position sizing ──────────────────────────────────────────────
-    balance = get_account_balance()
-    lots    = calculate_lot_size(symbol, sl_pips, CONFIG["risk_pct"], balance)
-    print(f"  Balance: {balance:.2f} | Lots: {lots} | "
-          f"Risk: ${balance * CONFIG['risk_pct']:.2f}")
-
-    # ── Step 11: Execute or paper-log ─────────────────────────────────────────
-    signal = {
-        'entry_datetime':  datetime.utcnow().isoformat(),
-        'pair':            symbol,
-        'direction':       direction,
-        'ensemble_prob':   round(prob, 4),
-        'confidence':      round(confidence, 4),
-        'regime':          current_regime,
-        'gate_passed':     True,
-        'gate_reason':     '',
-        'entry_price':     price,
-        'tp_price':        round(tp_price, 5),
-        'sl_price':        round(sl_price, 5),
-        'lots':            lots,
-        'atr_pips':        round(sl_pips, 1),
-        'vix_regime':      float(vix_val),
-        'adx_14':          round(adx_val, 2),
-        'session':         int(df_features['session'].iloc[-1]),
-        'ticket':          None,
-        'exit_datetime':   None,
-        'exit_price':      None,
-        'outcome':         '',
-        'pnl_pips':        None,
-        'notes':           f"mode={CONFIG['mode']}",
-    }
-
-    if CONFIG["mode"] == "paper":
-        signal['ticket']  = f"PAPER_{int(time.time())}"
-        signal['outcome'] = ''
-        log_signal(signal)
-        print(f"  [PAPER TRADE] {'LONG' if direction==1 else 'SHORT'} "
-              f"{lots} lots at {price:.5f}")
-        print(f"  TP: {tp_price:.5f} | SL: {sl_price:.5f}")
-        print(f"  [LOGGED] Signal recorded to {CONFIG['log_file']}")
-
-    elif CONFIG["mode"] == "live":
-        print(f"  [LIVE] Sending order: "
-              f"{'BUY' if direction==1 else 'SELL'} {lots} lots {symbol}")
-        result = send_order(symbol, direction, lots, tp_price, sl_price)
-        if result["success"]:
-            signal['ticket']      = result['ticket']
-            signal['entry_price'] = result['price']
-            log_signal(signal)
-            print(f"  [OK] Order filled | Ticket: {result['ticket']} | "
-                  f"Price: {result['price']:.5f}")
-        else:
-            print(f"  [ERROR] Order failed: {result.get('error', 'unknown')}")
-            return None
-
-    return signal
+    signal_record['gate_passed'] = True
+    signal_record['outcome'] = 'SIGNAL'
+    log_signal(signal_record)
+    print(f"  [LOGGED] Hourly signal recorded to {CONFIG['log_file']}")
+    print("  [SIGNAL ONLY] Execution is handled by sigma_entry_bot.py")
+    return signal_record

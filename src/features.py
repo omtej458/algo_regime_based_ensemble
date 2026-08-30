@@ -134,8 +134,12 @@ def compute_vix_regime(df: pd.DataFrame, vix_1d: pd.DataFrame) -> pd.DataFrame:
 def compute_dxy_slope(df: pd.DataFrame, dxy_1h: pd.DataFrame, ema_span: int = 20) -> pd.DataFrame:
     """
     DXY 20-bar EMA slope direction: +1 = DXY rising (USD strong), -1 = falling.
-    Shifted +1 bar to prevent lookahead.
+    If dxy_1h is empty (broker doesn't offer DXY), sets dxy_slope to 0 (neutral).
     """
+    if dxy_1h.empty or 'Close' not in dxy_1h.columns:
+        print("  [WARN] DXY data unavailable — setting dxy_slope to 0 (neutral).")
+        df["dxy_slope"] = 0.0
+        return df
     dxy_aligned = align_4h_to_1h(dxy_1h["Close"], df.index)
     dxy_ema = dxy_aligned.ewm(span=ema_span, adjust=False).mean()
     df["dxy_slope"] = np.sign(dxy_ema - dxy_ema.shift(5))
@@ -211,7 +215,9 @@ def compute_rate_differential(df: pd.DataFrame) -> pd.DataFrame:
         ("2025-10-30", 4.00, 2.15),
         ("2025-12-18", 3.75, 2.15), 
         ("2026-02-05", 3.75, 2.15),
-        ("2026-03-19", 3.75, 2.15),  # placeholder — update as meetings occur
+        ("2026-03-19", 3.75, 2.15),
+        ("2026-04-30", 3.75, 2.15),
+        ("2026-05-11", 3.75, 2.40)  # placeholder — update as meetings occur
     ]
 
     schedule_df = pd.DataFrame(rate_schedule, columns=["date", "fed_rate", "ecb_rate"])

@@ -1,3 +1,4 @@
 experiment_id,description,train_accuracy,test_accuracy,overfit_gap,hc_accuracy,auc_roc,top_feature_1,top_feature_2,top_feature_3,notes
 1,LightGBM baseline — 18 features — triple barrier labels,0.6386,0.5894,0.0492,0.8267,0.6287,ret_1d_5,us10y_z20,adx_14,Initial baseline run
 1,LightGBM baseline — 18 features — triple barrier labels,0.6412,0.6023,0.039,0.8291,0.6358,ret_1d_5,us10y_z20,adx_14,Initial baseline run
+1,LightGBM baseline — 18 features — triple barrier labels,0.6402,0.6058,0.0345,0.823,0.639,ret_1d_5,us10y_z20,adx_14,Initial baseline run
